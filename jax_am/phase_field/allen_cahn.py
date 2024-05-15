@@ -11,19 +11,6 @@ def phase_field(polycrystal, pf_args):
     # TODO: make this simpler
     h_x, h_y, h_z = polycrystal.mesh_h_xyz
 
-    def update_anisotropy_helper(edges):
-        edge_directions = edges.reshape(-1, pf_args['num_oris'], pf_args['dim']) # (num_edges, num_oris, dim)
-        unique_grain_directions = polycrystal.unique_grain_directions # (num_directions_per_cube, num_oris, dim)
-        cosines = np.sum(unique_grain_directions[None, :, :, :] * edge_directions[:, None, :, :], axis=-1) \
-                  / (np.linalg.norm(edge_directions, axis=-1)[:, None, :])
-        angles = np.arccos(cosines) 
-        angles = np.where(np.isfinite(angles), angles, 0.)
-        angles = np.where(angles < np.pi/2., angles, np.pi - angles)
-        angles = np.min(angles, axis=1)
-        anisotropy_term = 1. + pf_args['anisotropy'] * (np.cos(angles)**4 + np.sin(angles)**4) # (num_edges, num_oris)
-        anisotropy_term = anisotropy_term.reshape((edges.shape[0], edges.shape[1], edges.shape[2], pf_args['num_oris']))
-        return anisotropy_term
-
 
     def update_anisotropy_helper(edges):
         edge_directions = edges.reshape(-1, pf_args['num_oris'], pf_args['dim']) # (num_edges, num_oris, dim)
