@@ -4,9 +4,11 @@ import os
 import meshio
 import json
 import yaml
-
+import pandas as pd 
 import time
 from functools import wraps
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 from jax_am import logger
 
@@ -84,7 +86,86 @@ def make_video(data_dir):
     os.system(
         f'ffmpeg -y -framerate 10 -i {data_dir}/png/tmp/u.%04d.png -pix_fmt yuv420p -vf \
                "crop=trunc(iw/2)*2:trunc(ih/2)*2" {data_dir}/mp4/test.mp4') # noqa
+    
+    
+def to_data_frame(data_dir, dt=2 * 1e-6):
+    mesh_dir = os.path.join(data_dir, 'msh', 'box.msh')
+    vtk_dir = os.path.join(data_dir, 'vtk')
+    all_data = []
+    mesh = meshio.read(mesh_dir)
+    mesh_df = pd.DataFrame(mesh.points, columns=["x", "y", "z"])
+    vtu_files = [f for f in os.listdir(vtk_dir) if f.endswith('.vtu')]
+    
+    # Assuming the first file is always available and correctly formatted
+    stepsave = int(vtu_files[1][-9:-4])
+    print(f"Step save: {stepsave}")
+    
+    i = 0
+    
+    for vtu_file in vtu_files:
+        time_value = round(i * stepsave * dt, 8)
+        time = pd.Series(onp.full(len(mesh_df), time_value))
+        vtu_path = os.path.join(vtk_dir, vtu_file)
+        vtu_data = meshio.read(vtu_path)
+        data_dict = pd.concat([mesh_df, time.rename('time')], axis=1)
+        
+        if vtu_data.point_data:
+            for name, data in vtu_data.point_data.items():
+                # Handle the case where data has multiple components (e.g., a vector field)
+                if data.ndim == 1:
+                    # Data has a single component
+                    data_dict[name] = data
+                else:
+                    # Flatten multi-dimensional data into separate columns
+                    for idx in onp.ndindex(data.shape[1:]):
+                        flattened_name = f"{name}_{'_'.join(map(str, idx))}"
+                        data_dict[flattened_name] = data[(slice(None),) + idx]
+                i += 1
+                
+            all_data.append(pd.DataFrame(data_dict))
+    
+    DF = pd.concat(all_data, ignore_index=True)
+    DF.to_csv("data_frame.csv", index=False)
+    print('save as data_frame.csv')
+    return DF
+    
+def make_scatter(data_csv_dir,solname = 'sol_0', format = 'gif'):
+    data_frame = pd.read_csv(data_csv_dir)
+    X_unique = pd.unique(data_frame['x'])
+    Y_unique = pd.unique(data_frame['y'])
+    Z_unique = pd.unique(data_frame['z'])
+    time_unique = pd.unique(data_frame['time'])
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    
+    sc = ax.scatter([], [], [], c=[], cmap='jet', vmin=data_frame[solname].min(), vmax=data_frame[solname].max())
+    cbar = fig.colorbar(sc, ax=ax, pad=0.1, shrink=0.5)
+    
+    def init():
+        ax.set_xlim(X_unique.min(), X_unique.max())
+        ax.set_ylim(Y_unique.min(), Y_unique.max())
+        ax.set_zlim(Z_unique.min(), Z_unique.max())
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        return sc,
 
+    def update(time_value):
+        frame_data = data_frame[data_frame['time'] == time_value]
+        ax.clear()
+        ax.set_xlim(X_unique.min(), X_unique.max())
+        ax.set_ylim(Y_unique.min(), Y_unique.max())
+        ax.set_zlim(Z_unique.min(), Z_unique.max())
+        sc = ax.scatter(frame_data['x'], frame_data['y'], frame_data['z'], c=frame_data[solname], cmap='jet', vmin=0, vmax=5000)
+        ax.set_title(f"Temperature at t = {time_value:.5f} S")
+        return sc,
+
+    anim = FuncAnimation(fig, update, frames=time_unique, init_func=init, blit=False)
+
+    anim.save(f'scatter_sol.{format}', writer='pillow', fps=10)
+
+    plt.show()    
 
 # A simpler decorator for printing the timing results of a function
 def timeit(func):
